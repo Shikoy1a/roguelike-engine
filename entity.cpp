@@ -25,14 +25,14 @@ bool is_blocked(const std::vector<std::string>& map,
 
     // 2) 再看有没有阻挡型实体
     for (const auto& e : entities) {
-        if (e.blocks && e.x == x && e.y == y) {
+        if (e.blocks && e.x == x && e.y == y && e.hp > 0) {
             return true;
         }
     }
     return false;
 }
 
-// 尝试移动某个实体
+// 尝试移动某个实体（不能穿墙、不能穿过 blocks=true 的实体）
 void try_move_entity(Entity& e,
                      const std::vector<std::string>& map,
                      const std::vector<Entity>& entities,
