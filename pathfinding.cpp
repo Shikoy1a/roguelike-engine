@@ -1,29 +1,45 @@
 #include "pathfinding.hpp"
 #include <queue>
+#include <unordered_map>
 #include <limits>
-#include <cmath>
-#include <algorithm> 
+#include <algorithm> // std::reverse
 
-namespace {
-    // 把 (x, y) 映射到一维下标
-    int index(int x, int y, int width) {
-        return y * width + x;
+// 节点索引：把 (x, y) 映射到一个 int，方便存 map
+static int toIndex(int x, int y, int width) {
+    return y * width + x;
+}
+
+// 从索引还原成 (x, y)
+static std::pair<int,int> fromIndex(int idx, int width) {
+    return { idx % width, idx / width };
+}
+
+// 判断地图格子是否可通行（只看地图，不看实体）
+// 你可以根据自己的定义调整，这里假设 '.' 是可走的
+static bool is_walkable_tile_map_only(const std::vector<std::string>& map,
+                                      int x, int y) {
+    int height = static_cast<int>(map.size());
+    int width  = static_cast<int>(map[0].size());
+    if (x < 0 || x >= width || y < 0 || y >= height) return false;
+    return map[y][x] == '.';
+}
+
+Path find_path(const std::vector<std::string>& map,
+               int sx, int sy,
+               int tx, int ty) {
+    Path empty;
+
+    int height = static_cast<int>(map.size());
+    if (height == 0) return empty;
+    int width  = static_cast<int>(map[0].size());
+
+    // 起点或终点本身不可走，直接无路可走
+    if (!is_walkable_tile_map_only(map, sx, sy) &&
+        !(sx == tx && sy == ty)) {
+        return empty;
     }
-
-    bool in_bounds(const std::vector<std::string>& map, int x, int y) {
-        int h = static_cast<int>(map.size());
-        int w = static_cast<int>(map[0].size());
-        return x >= 0 && x < w && y >= 0 && y < h;
-    }
-
-    bool is_walkable(const std::vector<std::string>& map, int x, int y) {
-        if (!in_bounds(map, x, y)) return false;
-        char tile = map[y][x];
-        return tile == '.';
-    }
-
-    int manhattan(int x1, int y1, int x2, int y2) {
-        return std::abs(x1 - x2) + std::abs(y1 - y2);
+    if (!is_walkable_tile_map_only(map, tx, ty)) {
+        return empty;
     }
 
     struct Node {
@@ -31,107 +47,90 @@ namespace {
         int f; // f = g + h
     };
 
-    struct CompareNode {
+    auto heuristic = [=](int x, int y) {
+        // 曼哈顿距离
+        return std::abs(x - tx) + std::abs(y - ty);
+    };
+
+    // open list：用最小堆按 f 排序
+    struct NodeCmp {
         bool operator()(const Node& a, const Node& b) const {
-            return a.f > b.f; // 小 f 优先
+            return a.f > b.f; // 小顶堆
         }
     };
-}
 
-// A* 实现
-Path find_path(const std::vector<std::string>& map,
-               int startX, int startY,
-               int goalX, int goalY)
-{
-    int h = static_cast<int>(map.size());
-    if (h == 0) return {};
-    int w = static_cast<int>(map[0].size());
-    int total = w * h;
-
-    int startIdx = index(startX, startY, w);
-    int goalIdx  = index(goalX, goalY, w);
-
+    std::priority_queue<Node, std::vector<Node>, NodeCmp> open;
+    std::unordered_map<int, int> cameFrom;         // child idx -> parent idx
+    std::unordered_map<int, int> gScore;           // idx -> g
     const int INF = std::numeric_limits<int>::max();
 
-    std::vector<int> gScore(total, INF);
-    std::vector<int> fScore(total, INF);
-    std::vector<int> cameFrom(total, -1);
-    std::vector<bool> inOpen(total, false);
-    std::vector<bool> closed(total, false);
-
-    auto hCost = [&](int idx) {
-        int x = idx % w;
-        int y = idx / w;
-        return manhattan(x, y, goalX, goalY);
-    };
-
-    std::priority_queue<Node, std::vector<Node>, CompareNode> openSet;
+    int startIdx = toIndex(sx, sy, width);
+    int goalIdx  = toIndex(tx, ty, width);
 
     gScore[startIdx] = 0;
-    fScore[startIdx] = hCost(startIdx);
-    openSet.push({startIdx, fScore[startIdx]});
-    inOpen[startIdx] = true;
+    open.push({ startIdx, heuristic(sx, sy) });
 
-    const int dirs[4][2] = {
-        { 1, 0 },
-        {-1, 0 },
-        { 0, 1 },
-        { 0,-1 }
+    auto get_g = [&](int idx) {
+        auto it = gScore.find(idx);
+        if (it == gScore.end()) return INF;
+        return it->second;
     };
 
-    while (!openSet.empty()) {
-        Node current = openSet.top();
-        openSet.pop();
-        int curIdx = current.idx;
+    std::vector<bool> closed(width * height, false);
 
-        if (closed[curIdx]) continue;
-        closed[curIdx] = true;
+    while (!open.empty()) {
+        Node current = open.top();
+        open.pop();
 
-        if (curIdx == goalIdx) {
-            // 重建路径
+        if (closed[current.idx]) continue;
+        closed[current.idx] = true;
+
+        if (current.idx == goalIdx) {
+            // 找到目标，回溯路径
             Path path;
             int idx = goalIdx;
-            while (idx != -1 && idx != startIdx) {
-                int x = idx % w;
-                int y = idx / w;
-                path.push_back({x, y});
+            while (true) {
+                auto [cx, cy] = fromIndex(idx, width);
+                path.push_back({cx, cy});
+                if (idx == startIdx) break;
                 idx = cameFrom[idx];
             }
-            // 现在 path 是从 goal 到 start 的反向，反转一下
             std::reverse(path.begin(), path.end());
             return path;
         }
 
-        int curX = curIdx % w;
-        int curY = curIdx / w;
+        auto [cx, cy] = fromIndex(current.idx, width);
+
+        // 4 方向邻居
+        const int dirs[4][2] = {
+            { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }
+        };
 
         for (auto& d : dirs) {
-            int nx = curX + d[0];
-            int ny = curY + d[1];
+            int nx = cx + d[0];
+            int ny = cy + d[1];
 
-            if (!is_walkable(map, nx, ny) && !(nx == goalX && ny == goalY)) {
-                // 目标格子可以允许是玩家所在位置，所以单独放行 goal
+            if (!is_walkable_tile_map_only(map, nx, ny) &&
+                !(nx == tx && ny == ty)) {
                 continue;
             }
 
-            int nIdx = index(nx, ny, w);
+            int nIdx = toIndex(nx, ny, width);
             if (closed[nIdx]) continue;
 
-            int tentativeG = gScore[curIdx] + 1; // 每步代价为 1
+            int tentativeG = get_g(current.idx);
+            if (tentativeG == INF) continue;
+            tentativeG += 1; // 每步代价 1
 
-            if (tentativeG < gScore[nIdx]) {
-                cameFrom[nIdx] = curIdx;
-                gScore[nIdx] = tentativeG;
-                fScore[nIdx] = tentativeG + hCost(nIdx);
-
-                if (!inOpen[nIdx]) {
-                    inOpen[nIdx] = true;
-                    openSet.push({nIdx, fScore[nIdx]});
-                }
+            if (tentativeG < get_g(nIdx)) {
+                gScore[nIdx]   = tentativeG;
+                cameFrom[nIdx] = current.idx;
+                int f = tentativeG + heuristic(nx, ny);
+                open.push({ nIdx, f });
             }
         }
     }
 
-    // 没找到路径
-    return {};
+    // 找不到路径
+    return empty;
 }

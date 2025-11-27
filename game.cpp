@@ -9,7 +9,9 @@
 // ------- 控制台清屏 -------
 
 static void clear_screen() {
+
     system("cls");
+
 }
 
 // ------- ANSI 颜色（简单彩色控制台） -------
@@ -378,47 +380,47 @@ void Game::handleInput(char command, bool& running) {
 
 // 怪物 AI：朝玩家靠近，如果要走到玩家位置就攻击
 void Game::updateMonsters(bool& running) {
-    if (entities.empty()) return;
     Entity& player = entities[0];
 
     for (std::size_t i = 1; i < entities.size(); ++i) {
         Entity& monster = entities[i];
-        if (monster.hp <= 0) continue;
+        if (monster.hp <= 0) continue; // 死了就不动
 
-        int dx = 0, dy = 0;
+        // 1. 用 A* 计算从怪物到玩家的路径
+        Path path = find_path(map,
+                              monster.x, monster.y,
+                              player.x,  player.y);
 
-        if (monster.x < player.x) dx = 1;
-        else if (monster.x > player.x) dx = -1;
+        // [0] = 当前怪物位置, [1] = 下一步, ..., [N-1] = 玩家位置
+        if (path.size() >= 2) {
+            int nextX = path[1].first;
+            int nextY = path[1].second;
 
-        if (monster.y < player.y) dy = 1;
-        else if (monster.y > player.y) dy = -1;
+            // 2. 如果下一步就是玩家所在的格子 → 攻击玩家
+            if (nextX == player.x && nextY == player.y) {
+                player.hp -= monster.attack;
+                addLog("Monster " + std::string(1, monster.glyph) +
+                       " hits you for " + std::to_string(monster.attack) +
+                       " damage! (HP = " + std::to_string(player.hp) + ")");
 
-        int targetX = monster.x + dx;
-        int targetY = monster.y + dy;
-
-        // 目标格子是玩家 => 攻击玩家
-        if (targetX == player.x && targetY == player.y) {
-            player.hp -= monster.attack;
-            addLog(std::string("Monster ") + monster.glyph +
-                   " hits you for " + std::to_string(monster.attack) +
-                   " damage (HP=" + std::to_string(player.hp) + ")");
-
-            if (player.hp <= 0) {
-                addLog("You died!");
-                running = false;
-                return;
+                if (player.hp <= 0) {
+                    addLog("You died!");
+                    running = false;
+                    return;
+                }
+            } else {
+                // 3. 否则尝试向该格子移动（考虑其他怪物/墙的阻挡）
+                int dx = nextX - monster.x;
+                int dy = nextY - monster.y;
+                try_move_entity(monster, map, entities, dx, dy);
             }
         } else {
-            // 否则正常移动
-            if (dx != 0) {
-                try_move_entity(monster, map, entities, dx, 0);
-            }
-            if (dy != 0) {
-                try_move_entity(monster, map, entities, 0, dy);
-            }
+            // 没有路径（被墙完全隔开），可以退回到原来的“贪心靠近”或者原地不动
+            // 这里我让怪物原地不动，你也可以改成简单追踪逻辑
+            // （例如你之前的那套 dx/dy = sign(player - monster)）
         }
     }
 
-    // 怪物动作后重算 FoV
+    // 怪物行动后重新计算视野
     updateFov();
 }

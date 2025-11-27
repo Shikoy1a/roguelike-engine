@@ -30,6 +30,7 @@ int main() {
         char command = get_input();
         game.handleInput(command, running);
         if (!running) break;
+        
         game.updateMonsters(running);
     }
 
