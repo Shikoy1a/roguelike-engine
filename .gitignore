@@ -1,0 +1,7 @@
+# 编译输出
+*.exe
+*.obj
+*.o
+
+# VS Code 配置
+.vscode/
